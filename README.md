@@ -1,3 +1,38 @@
+# Warp with Local Server
+
+> **⚠️ DISCLAIMER: This is an UNOFFICIAL, experimental fork. Use at your own risk. This project has NOT been thoroughly tested and may contain bugs, instability, or breaking changes. It is not affiliated with or endorsed by Warpdotdev.**
+
+A fork of [Warp](https://github.com/warpdotdev/warp) that lets you use the Warp terminal with your own AI provider via an OpenAI-compatible local shim server — **no Warp account, no Warp API key, and no cloud sign-up required.**
+
+## How It Works
+
+The Warp client normally communicates with Warp's cloud backend for AI features (Agent Mode, etc.). This fork includes a **local shim server** that intercepts those requests and translates them into OpenAI-compatible API calls. This means you can use:
+
+- Any OpenAI-compatible upstream endpoint (OpenAI, Anthropic, local models via Ollama, LiteLLM, vLLM, etc.)
+- Your own API keys and models
+- Custom model configuration (context window size, etc.)
+
+## Quick Start
+
+```bash
+# Build and run with the local shim server (default port 8080)
+cargo run --features with_local_server
+
+# Use a custom port
+SERVER_ROOT_URL=http://localhost:8082 WS_SERVER_URL=ws://localhost:8082/graphql/v2 cargo run --features with_local_server
+```
+
+Set your OpenAI-compatible endpoint and API key via environment variables or the shim's configuration.
+
+## ⚠️ Warnings
+
+- **Untested**: This is experimental code. Expect rough edges.
+- **No warranty**: Use at your own risk. This may corrupt data, crash, or behave unexpectedly.
+- **Not official**: Don't report issues from this fork to the upstream Warp repository.
+- **GitHub Workflows stripped**: Most upstream CI/CD workflows have been removed from this fork as they require Warp-specific secrets and infrastructure.
+
+---
+
 <a href="https://www.warp.dev">
     <img width="1024" alt="Warp Agentic Development Environment product preview" src="https://github.com/user-attachments/assets/9976b2da-2edd-4604-a36c-8fd53719c6d4" />
 </a>
