@@ -651,7 +651,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        config::{FeatureConfig, ModelMapping, ServerConfig},
+        config::{FeatureConfig, ModelMapping, ModelMetadataConfig, ServerConfig},
         protocol::sse::decode_response_event_data_like_client,
     };
 
@@ -1440,6 +1440,7 @@ mod tests {
             },
             upstreams,
             models,
+            model_metadata: ModelMetadataConfig::default(),
             features: FeatureConfig::default(),
         }
     }

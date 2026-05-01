@@ -55,6 +55,7 @@ where
         upstream_has_api_key = default_upstream.api_key.is_some(),
         upstream_api_key_env_configured = default_upstream.api_key_env.is_some(),
         model_mappings = %config.model_mappings_for_log(),
+        context_window_tokens = config.model_metadata.context_window_tokens,
         tools_enabled = config.features.tools_enabled,
         mcp_tools_enabled = config.features.mcp_tools_enabled,
         passive_suggestions_enabled = config.features.passive_suggestions_enabled,

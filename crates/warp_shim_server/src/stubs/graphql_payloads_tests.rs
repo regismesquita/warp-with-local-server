@@ -11,11 +11,17 @@ use tower::ServiceExt;
 use url::Url;
 
 use crate::{
-    config::{FeatureConfig, ModelMapping, ServerConfig, ShimConfig, UpstreamConfig},
+    config::{
+        FeatureConfig, ModelMapping, ModelMetadataConfig, ServerConfig, ShimConfig, UpstreamConfig,
+    },
     stubs::graphql_payloads,
 };
 
 fn test_config() -> ShimConfig {
+    test_config_with_context_window(128_000)
+}
+
+fn test_config_with_context_window(context_window_tokens: u32) -> ShimConfig {
     let mut upstreams = BTreeMap::new();
     upstreams.insert(
         "default".to_string(),
@@ -67,6 +73,9 @@ fn test_config() -> ShimConfig {
         },
         upstreams,
         models,
+        model_metadata: ModelMetadataConfig {
+            context_window_tokens,
+        },
         features: FeatureConfig::default(),
     }
 }
@@ -145,6 +154,21 @@ fn get_user_round_trips_through_graphql_response_type() {
     let model = output.user.llms.agent_mode.choices.first().unwrap();
     assert_eq!(u32::from(model.context_window.default), 128_000);
     assert_eq!(u32::from(model.context_window.max), 128_000);
+}
+
+#[test]
+fn get_user_uses_configured_context_window_tokens() {
+    let response: GraphQlResponse<warp_graphql::queries::get_user::GetUser> = decode(
+        graphql_payloads::get_user(&test_config_with_context_window(32_768)),
+    );
+    let data = response.data.unwrap();
+
+    let warp_graphql::queries::get_user::UserResult::UserOutput(output) = data.user else {
+        panic!("expected UserOutput");
+    };
+    let model = output.user.llms.agent_mode.choices.first().unwrap();
+    assert_eq!(u32::from(model.context_window.default), 32_768);
+    assert_eq!(u32::from(model.context_window.max), 32_768);
 }
 
 #[test]

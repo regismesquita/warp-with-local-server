@@ -44,6 +44,7 @@ Supported environment fallbacks:
 - `WARP_SHIM_API_KEY`
 - `WARP_SHIM_API_KEY_ENV`
 - `WARP_SHIM_MODEL_MAP` (comma-separated, for example `auto=llama3.1,cli-agent-auto=llama3.1`)
+- `WARP_SHIM_CONTEXT_WINDOW_TOKENS`
 
 Config lookup order:
 
@@ -72,6 +73,9 @@ auto = { upstream = "default", model = "llama3.1" }
 "computer-use-agent-auto" = { upstream = "default", model = "llama3.1" }
 "coding-auto" = { upstream = "default", model = "llama3.1" }
 
+[model_metadata]
+context_window_tokens = 128000
+
 [features]
 tools_enabled = true
 mcp_tools_enabled = true
@@ -83,6 +87,7 @@ You can also pass model mappings directly:
 ```bash
 cargo run -p warp_shim_server --bin warp-shim-server -- \
   --upstream-url http://127.0.0.1:11434/v1 \
+  --context-window-tokens 128000 \
   --model auto=llama3.1 \
   --model cli-agent-auto=llama3.1
 ```

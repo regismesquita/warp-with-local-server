@@ -5,7 +5,6 @@ use crate::config::ShimConfig;
 const LOCAL_USER_UID: &str = "local-shim-user";
 const LOCAL_USER_EMAIL: &str = "local@warp-shim";
 const LOCAL_WORKSPACE_UID: &str = "local-shim-workspace";
-const LOCAL_MODEL_CONTEXT_WINDOW: u32 = 128_000;
 
 pub(crate) fn get_feature_model_choices(config: &ShimConfig) -> Value {
     json!({
@@ -149,16 +148,16 @@ fn model_catalog(config: &ShimConfig) -> Vec<Value> {
     let mut models = config
         .models
         .keys()
-        .map(|model_id| model_info(model_id))
+        .map(|model_id| model_info(config, model_id))
         .collect::<Vec<_>>();
     if models.is_empty() {
         tracing::warn!("shim config has no model mappings; returning fallback `auto` model");
-        models.push(model_info("auto"));
+        models.push(model_info(config, "auto"));
     }
     models
 }
 
-fn model_info(model_id: &str) -> Value {
+fn model_info(config: &ShimConfig, model_id: &str) -> Value {
     let display_name = format!("Local {model_id}");
     json!({
         "id": model_id,
@@ -187,16 +186,17 @@ fn model_info(model_id: &str) -> Value {
         "pricing": {
             "discountPercentage": null,
         },
-        "contextWindow": context_window(),
+        "contextWindow": context_window(config),
     })
 }
 
-fn context_window() -> Value {
+fn context_window(config: &ShimConfig) -> Value {
+    let tokens = config.model_metadata.context_window_tokens;
     json!({
         "isConfigurable": false,
-        "min": LOCAL_MODEL_CONTEXT_WINDOW,
-        "max": LOCAL_MODEL_CONTEXT_WINDOW,
-        "default": LOCAL_MODEL_CONTEXT_WINDOW,
+        "min": tokens,
+        "max": tokens,
+        "default": tokens,
     })
 }
 

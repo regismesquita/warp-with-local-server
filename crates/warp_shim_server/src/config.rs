@@ -14,6 +14,7 @@ use url::Url;
 const DEFAULT_PORT: u16 = 4444;
 const DEFAULT_UPSTREAM_NAME: &str = "default";
 const DEFAULT_UPSTREAM_TIMEOUT_SECS: u64 = 180;
+const DEFAULT_CONTEXT_WINDOW_TOKENS: u32 = 128_000;
 const DEFAULT_MODEL_IDS: [&str; 4] = [
     "auto",
     "cli-agent-auto",
@@ -54,6 +55,10 @@ struct CliArgs {
     /// Model mapping in the form warp_model=upstream_model. May be repeated.
     #[arg(long = "model", value_name = "WARP=UPSTREAM")]
     model: Vec<ModelMappingArg>,
+
+    /// Context window size, in tokens, advertised for shim-provided model metadata.
+    #[arg(long, value_name = "TOKENS")]
+    context_window_tokens: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -89,6 +94,7 @@ pub struct ShimConfig {
     pub server: ServerConfig,
     pub upstreams: BTreeMap<String, UpstreamConfig>,
     pub models: BTreeMap<String, ModelMapping>,
+    pub model_metadata: ModelMetadataConfig,
     pub features: FeatureConfig,
 }
 
@@ -115,6 +121,7 @@ impl ShimConfig {
 
         let upstreams = merge_upstreams(&cli, &toml)?;
         let models = merge_models(&cli, &toml, &upstreams)?;
+        let model_metadata = merge_model_metadata(&cli, &toml.model_metadata)?;
         let features = merge_features(&toml.features);
 
         Ok(Self {
@@ -126,6 +133,7 @@ impl ShimConfig {
             },
             upstreams,
             models,
+            model_metadata,
             features,
         })
     }
@@ -174,6 +182,19 @@ pub struct ModelMapping {
 }
 
 #[derive(Clone, Debug)]
+pub struct ModelMetadataConfig {
+    pub context_window_tokens: u32,
+}
+
+impl Default for ModelMetadataConfig {
+    fn default() -> Self {
+        Self {
+            context_window_tokens: DEFAULT_CONTEXT_WINDOW_TOKENS,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct FeatureConfig {
     pub tools_enabled: bool,
     pub mcp_tools_enabled: bool,
@@ -196,6 +217,7 @@ struct TomlConfig {
     server: TomlServer,
     upstreams: BTreeMap<String, TomlUpstream>,
     models: BTreeMap<String, TomlModelMapping>,
+    model_metadata: TomlModelMetadata,
     features: TomlFeatures,
 }
 
@@ -222,6 +244,12 @@ struct TomlModelMapping {
     #[serde(default)]
     upstream: Option<String>,
     model: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+struct TomlModelMetadata {
+    context_window_tokens: Option<u32>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -452,6 +480,23 @@ fn parse_env_model_map() -> Result<Option<Vec<ModelMappingArg>>> {
     Ok(Some(mappings))
 }
 
+fn merge_model_metadata(cli: &CliArgs, toml: &TomlModelMetadata) -> Result<ModelMetadataConfig> {
+    let defaults = ModelMetadataConfig::default();
+    let context_window_tokens = cli
+        .context_window_tokens
+        .or(parse_env("WARP_SHIM_CONTEXT_WINDOW_TOKENS")?)
+        .or(toml.context_window_tokens)
+        .unwrap_or(defaults.context_window_tokens);
+
+    if context_window_tokens == 0 {
+        bail!("context window tokens must be greater than zero");
+    }
+
+    Ok(ModelMetadataConfig {
+        context_window_tokens,
+    })
+}
+
 fn merge_features(toml: &TomlFeatures) -> FeatureConfig {
     let defaults = FeatureConfig::default();
     FeatureConfig {
@@ -483,4 +528,55 @@ fn non_empty_env(name: &str) -> Option<String> {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cli_args() -> CliArgs {
+        CliArgs {
+            config: None,
+            host: None,
+            port: None,
+            upstream_url: None,
+            api_key: None,
+            api_key_env: None,
+            model: Vec::new(),
+            context_window_tokens: None,
+        }
+    }
+
+    #[test]
+    fn model_metadata_defaults_context_window_tokens() {
+        let metadata = merge_model_metadata(&cli_args(), &TomlModelMetadata::default()).unwrap();
+
+        assert_eq!(metadata.context_window_tokens, 128_000);
+    }
+
+    #[test]
+    fn model_metadata_reads_toml_context_window_tokens() {
+        let metadata = merge_model_metadata(
+            &cli_args(),
+            &TomlModelMetadata {
+                context_window_tokens: Some(32_768),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(metadata.context_window_tokens, 32_768);
+    }
+
+    #[test]
+    fn model_metadata_rejects_zero_context_window_tokens() {
+        let err = merge_model_metadata(
+            &cli_args(),
+            &TomlModelMetadata {
+                context_window_tokens: Some(0),
+            },
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("greater than zero"));
+    }
 }
