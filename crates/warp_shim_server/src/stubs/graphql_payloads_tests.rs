@@ -142,6 +142,9 @@ fn get_user_round_trips_through_graphql_response_type() {
         Some("local@warp-shim")
     );
     assert_eq!(output.user.llms.agent_mode.default_id, "auto");
+    let model = output.user.llms.agent_mode.choices.first().unwrap();
+    assert_eq!(u32::from(model.context_window.default), 128_000);
+    assert_eq!(u32::from(model.context_window.max), 128_000);
 }
 
 #[test]
@@ -177,6 +180,15 @@ fn get_workspaces_metadata_for_user_round_trips_through_graphql_response_type() 
     let workspace = output.user.workspaces.into_iter().next().unwrap();
 
     assert_eq!(workspace.uid.into_inner(), "local-shim-workspace");
+    let model = workspace
+        .feature_model_choice
+        .agent_mode
+        .choices
+        .first()
+        .unwrap();
+    assert_eq!(u32::from(model.context_window.default), 128_000);
+    assert_eq!(u32::from(model.context_window.max), 128_000);
+    assert!(workspace.settings.ambient_agent_settings.is_none());
     assert!(workspace.settings.llm_settings.enabled);
     assert_eq!(workspace.settings.llm_settings.host_configs.len(), 1);
     assert!(matches!(

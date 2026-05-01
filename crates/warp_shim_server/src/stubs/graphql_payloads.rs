@@ -5,6 +5,7 @@ use crate::config::ShimConfig;
 const LOCAL_USER_UID: &str = "local-shim-user";
 const LOCAL_USER_EMAIL: &str = "local@warp-shim";
 const LOCAL_WORKSPACE_UID: &str = "local-shim-workspace";
+const LOCAL_MODEL_CONTEXT_WINDOW: u32 = 128_000;
 
 pub(crate) fn get_feature_model_choices(config: &ShimConfig) -> Value {
     json!({
@@ -186,6 +187,16 @@ fn model_info(model_id: &str) -> Value {
         "pricing": {
             "discountPercentage": null,
         },
+        "contextWindow": context_window(),
+    })
+}
+
+fn context_window() -> Value {
+    json!({
+        "isConfigurable": false,
+        "min": LOCAL_MODEL_CONTEXT_WINDOW,
+        "max": LOCAL_MODEL_CONTEXT_WINDOW,
+        "default": LOCAL_MODEL_CONTEXT_WINDOW,
     })
 }
 
@@ -366,6 +377,7 @@ fn workspace_settings() -> Value {
             "enabled": false,
             "setting": "DISABLE",
         },
+        "ambientAgentSettings": null,
         "sandboxedAgentSettings": null,
     })
 }
