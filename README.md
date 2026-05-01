@@ -1,3 +1,38 @@
+# Warp with Local Server
+
+> **⚠️ DISCLAIMER: This is an UNOFFICIAL, experimental fork. Use at your own risk. This project has NOT been thoroughly tested and may contain bugs, instability, or breaking changes. It is not affiliated with or endorsed by Warpdotdev.**
+
+A fork of [Warp](https://github.com/warpdotdev/warp) that lets you use the Warp terminal with your own AI provider via an OpenAI-compatible local shim server — **no Warp account, no Warp API key, and no cloud sign-up required.**
+
+## How It Works
+
+The Warp client normally communicates with Warp's cloud backend for AI features (Agent Mode, etc.). This fork includes a **local shim server** that intercepts those requests and translates them into OpenAI-compatible API calls. This means you can use:
+
+- Any OpenAI-compatible upstream endpoint (OpenAI, Anthropic, local models via Ollama, LiteLLM, vLLM, etc.)
+- Your own API keys and models
+- Custom model configuration (context window size, etc.)
+
+## Quick Start
+
+```bash
+# Build and run with the local shim server (default port 8080)
+cargo run --features with_local_server
+
+# Use a custom port
+SERVER_ROOT_URL=http://localhost:8082 WS_SERVER_URL=ws://localhost:8082/graphql/v2 cargo run --features with_local_server
+```
+
+Set your OpenAI-compatible endpoint and API key via environment variables or the shim's configuration.
+
+## ⚠️ Warnings
+
+- **Untested**: This is experimental code. Expect rough edges.
+- **No warranty**: Use at your own risk. This may corrupt data, crash, or behave unexpectedly.
+- **Not official**: Don't report issues from this fork to the upstream Warp repository.
+- **GitHub Workflows stripped**: Most upstream CI/CD workflows have been removed from this fork as they require Warp-specific secrets and infrastructure.
+
+---
+
 <a href="https://www.warp.dev">
     <img width="1024" alt="Warp Agentic Development Environment product preview" src="https://github.com/user-attachments/assets/9976b2da-2edd-4604-a36c-8fd53719c6d4" />
 </a>
@@ -31,6 +66,14 @@
 
 You can [download Warp](https://www.warp.dev/download) and [read our docs](https://docs.warp.dev/) for platform-specific instructions.
 
+## Warp Contributions Overview Dashboard
+
+Explore [build.warp.dev](https://build.warp.dev) to:
+- Watch thousands of Oz agents triage issues, write specs, implement changes, and review PRs
+- View top contributors and in-flight features
+- Track your own issues with GitHub sign-in
+- Click into active agent sessions in a web-compiled Warp terminal
+
 ## Licensing
 
 Warp's UI framework (the `warpui_core` and `warpui` crates) are licensed under the [MIT license](LICENSE-MIT).
@@ -40,6 +83,9 @@ The rest of the code in this repository is licensed under the [AGPL v3](LICENSE-
 ## Open Source & Contributing
 
 Warp's client codebase is open source and lives in this repository. We welcome community contributions and have designed a lightweight workflow to help new contributors get started. For the full contribution flow, read our [CONTRIBUTING.md](CONTRIBUTING.md) guide.
+
+> [!TIP]
+> **Chat with contributors and the Warp team** in the [`#oss-contributors`](https://warpcommunity.slack.com/archives/C0B0LM8N4DB) Slack channel — a good place for ad-hoc questions, design discussion, and pairing with maintainers. New here? [Join the Warp Slack community](https://go.warp.dev/join-preview) first, then jump into `#oss-contributors`.
 
 ### Issue to PR
 
@@ -66,7 +112,7 @@ Interested in joining the team? See our [open roles](https://www.warp.dev/career
 ## Support and Questions
 
 1. See our [docs](https://docs.warp.dev/) for a comprehensive guide to Warp's features.
-2. Join our [Slack Community](https://go.warp.dev/join-preview) to connect with other users and get help from the Warp team.
+2. Join our [Slack Community](https://go.warp.dev/join-preview) to connect with other users and get help from the Warp team — contributors hang out in [`#oss-contributors`](https://warpcommunity.slack.com/archives/C0B0LM8N4DB).
 3. Try our [Preview build](https://www.warp.dev/download-preview) to test the latest experimental features.
 4. Mention **@oss-maintainers** on any issue to escalate to the team — for example, if you encounter problems with the automated agents.
 
