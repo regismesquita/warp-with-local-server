@@ -682,6 +682,7 @@ impl BlocklistAIHistoryModel {
                 }
             }
 
+            let new_status = conversation.status().clone();
             self.conversations_by_id
                 .insert(conversation_id, conversation);
 
@@ -690,7 +691,8 @@ impl BlocklistAIHistoryModel {
             ctx.emit(BlocklistAIHistoryEvent::UpdatedConversationStatus {
                 conversation_id,
                 terminal_view_id,
-                is_restored: true,
+                update: ConversationStatusUpdate::Restored,
+                new_status,
             });
         }
 
@@ -721,6 +723,13 @@ impl BlocklistAIHistoryModel {
             return;
         }
 
+        // Track previous owners we removed the conversation from so we can
+        // emit ownership-transfer events outside of the borrow of
+        // `live_conversation_ids_for_terminal_view`. The conversation rendering
+        // model assumes a single canonical owner per conversation, so each
+        // previous owner needs a chance to drop its now-stale rendered AI
+        // blocks.
+        let mut previous_owners: Vec<EntityId> = Vec::new();
         for (other_terminal_view, other_terminal_view_live_conversation_ids) in self
             .live_conversation_ids_for_terminal_view
             .iter_mut()
@@ -731,6 +740,7 @@ impl BlocklistAIHistoryModel {
                 .position(|id| *id == conversation_id)
             {
                 other_terminal_view_live_conversation_ids.remove(pos);
+                previous_owners.push(*other_terminal_view);
             }
 
             if self
@@ -745,6 +755,13 @@ impl BlocklistAIHistoryModel {
                     terminal_view_id: *other_terminal_view,
                 });
             }
+        }
+        for previous_terminal_view_id in previous_owners {
+            ctx.emit(BlocklistAIHistoryEvent::ConversationOwnershipTransferred {
+                conversation_id,
+                previous_terminal_view_id,
+                new_terminal_view_id: terminal_view_id,
+            });
         }
 
         self.active_conversation_for_terminal_view
@@ -1090,10 +1107,9 @@ impl BlocklistAIHistoryModel {
             parent_agent_id: None,
             agent_name: None,
             parent_conversation_id: None,
+            is_remote_child: false,
             run_id: None,
             autoexecute_override: Some(source_conversation.autoexecute_override().into()),
-            // The event cursor belongs to the source conversation's run; the
-            // forked conversation will establish its own cursor.
             last_event_sequence: None,
         };
         let forked_conversation_id = AIConversationId::new();
@@ -1245,10 +1261,9 @@ impl BlocklistAIHistoryModel {
             parent_agent_id: None,
             agent_name: None,
             parent_conversation_id: None,
+            is_remote_child: false,
             run_id: None,
             autoexecute_override: Some(conversation.autoexecute_override().into()),
-            // The event cursor belongs to the source conversation's run; the
-            // forked conversation will establish its own cursor.
             last_event_sequence: None,
         };
 
@@ -2055,6 +2070,16 @@ fn agent_id_key(conversation: &AIConversation) -> Option<String> {
     conversation.orchestration_agent_id()
 }
 
+/// Whether an `UpdatedConversationStatus` event represents a restoration
+/// (the conversation was re-loaded into a terminal view; the underlying
+/// `ConversationStatus` did not change) or a real status set, in which case
+/// the previous status is included.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConversationStatusUpdate {
+    Restored,
+    Changed { prev_status: ConversationStatus },
+}
+
 #[derive(Clone, Debug)]
 pub enum BlocklistAIHistoryEvent {
     /// A new conversation was started.
@@ -2108,7 +2133,10 @@ pub enum BlocklistAIHistoryEvent {
     UpdatedConversationStatus {
         conversation_id: AIConversationId,
         terminal_view_id: EntityId,
-        is_restored: bool,
+        /// Distinguishes a restoration from a real status set.
+        update: ConversationStatusUpdate,
+        /// The conversation's status after this update.
+        new_status: ConversationStatus,
     },
 
     /// The active conversation was set to another conversation in the history.
@@ -2191,6 +2219,27 @@ pub enum BlocklistAIHistoryEvent {
         conversation_id: AIConversationId,
         terminal_view_id: EntityId,
     },
+
+    /// Emitted when a conversation moves between terminal views — i.e. when
+    /// `set_active_conversation_id` removes the conversation from the live
+    /// list of one or more `previous_terminal_view_id`s. The previous owners
+    /// must drop any rendered AI blocks for this conversation so the new
+    /// owner is the sole renderer; otherwise we end up with a transcript
+    /// split across panes (some blocks in the old view, new exchanges in the
+    /// new view). The `terminal_view_id()` accessor returns the previous
+    /// owner so existing per-view event filters do the right thing.
+    ConversationOwnershipTransferred {
+        conversation_id: AIConversationId,
+        previous_terminal_view_id: EntityId,
+        new_terminal_view_id: EntityId,
+    },
+
+    /// Links an executor-minted request to a freshly-created
+    /// conversation.
+    NewConversationRequestComplete {
+        request_id: crate::ai::blocklist::StartAgentRequestId,
+        conversation_id: AIConversationId,
+    },
 }
 
 impl BlocklistAIHistoryEvent {
@@ -2247,6 +2296,10 @@ impl BlocklistAIHistoryEvent {
             | BlocklistAIHistoryEvent::UpgradedTask {
                 terminal_view_id, ..
             }
+            | BlocklistAIHistoryEvent::ConversationOwnershipTransferred {
+                previous_terminal_view_id: terminal_view_id,
+                ..
+            }
             | BlocklistAIHistoryEvent::UpdatedConversationArtifacts {
                 terminal_view_id, ..
             }
@@ -2257,7 +2310,25 @@ impl BlocklistAIHistoryEvent {
             BlocklistAIHistoryEvent::UpdatedConversationMetadata {
                 terminal_view_id, ..
             } => *terminal_view_id,
+            // NewConversationRequestComplete is executor-scoped and has no
+            // terminal_view_id.
+            BlocklistAIHistoryEvent::NewConversationRequestComplete { .. } => None,
         }
+    }
+}
+
+impl BlocklistAIHistoryModel {
+    /// Emits [`BlocklistAIHistoryEvent::NewConversationRequestComplete`].
+    pub fn record_new_conversation_request_complete(
+        &mut self,
+        request_id: crate::ai::blocklist::StartAgentRequestId,
+        conversation_id: AIConversationId,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        ctx.emit(BlocklistAIHistoryEvent::NewConversationRequestComplete {
+            request_id,
+            conversation_id,
+        });
     }
 }
 

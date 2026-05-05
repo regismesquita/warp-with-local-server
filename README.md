@@ -87,6 +87,8 @@ Warp's client codebase is open source and lives in this repository. We welcome c
 > [!TIP]
 > **Chat with contributors and the Warp team** in the [`#oss-contributors`](https://warpcommunity.slack.com/archives/C0B0LM8N4DB) Slack channel — a good place for ad-hoc questions, design discussion, and pairing with maintainers. New here? [Join the Warp Slack community](https://go.warp.dev/join-preview) first, then jump into `#oss-contributors`.
 
+Maintaining a popular open-source project? [Apply for Oz credits](https://tally.so/r/LZWxqG) to bring [agentic workflows](https://github.com/warpdotdev/oz-for-oss) like issue triage, PR review, and community management to your repo.
+
 ### Issue to PR
 
 Before filing, [search existing issues](https://github.com/warpdotdev/warp/issues?q=is%3Aissue+is%3Aopen+sort%3Areactions-%2B1-desc) for your bug or feature request. If nothing exists, [file an issue](https://github.com/warpdotdev/warp/issues/new/choose) using our templates. Security vulnerabilities should be reported privately as described in [CONTRIBUTING.md](CONTRIBUTING.md#reporting-security-issues).

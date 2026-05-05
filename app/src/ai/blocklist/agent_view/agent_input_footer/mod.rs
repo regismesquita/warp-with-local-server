@@ -105,6 +105,8 @@ use warpui::{
     ViewHandle,
 };
 
+#[cfg(feature = "local_fs")]
+pub(crate) use self::environment_selector::sort_environments_by_recency;
 #[cfg(not(target_family = "wasm"))]
 use warpui::r#async::Timer;
 

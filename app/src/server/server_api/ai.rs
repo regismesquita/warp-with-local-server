@@ -16,6 +16,7 @@ use warp_core::{features::FeatureFlag, report_error};
 use warp_multi_agent_api::ConversationData;
 
 use super::auth::AuthClient;
+use super::harness_support::UploadTarget;
 use super::ServerApi;
 use crate::ai::agent::api::ServerConversationToken;
 use crate::ai::agent::conversation::{
@@ -226,6 +227,55 @@ pub struct SpawnAgentRequest {
     /// Base64-encoded `warp.multi_agent.v1.Attachment` payloads to restore as referenced attachments.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub referenced_attachments: Vec<String>,
+    /// When set, instructs the server to fork the named conversation and use the resulting
+    /// fork id as `task.AgentConversationID`. Used by the local-to-cloud handoff flow.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fork_from_conversation_id: Option<String>,
+    /// References a batch of files previously uploaded to handoff/{token}/
+    /// via `POST /agent/handoff/upload-snapshot`. The server stores the token on the new run's
+    /// queued execution input and resolves the prefix in place at rehydration time.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub initial_snapshot_token: Option<InitialSnapshotToken>,
+}
+
+/// Server-minted token returned by `POST /agent/handoff/upload-snapshot` that scopes a batch
+/// of presigned upload URLs to `handoff/{token}/`. The client passes it
+/// back via `SpawnAgentRequest.initial_snapshot_token`; the server stores it on the new run's
+/// queued execution input so rehydration discovery can read the same prefix.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct InitialSnapshotToken(String);
+
+impl InitialSnapshotToken {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Request body for `POST /agent/handoff/upload-snapshot`. Used by the local-to-cloud
+/// handoff flow (REMOTE-1486) to allocate a token and presigned upload URLs
+/// scoped to `handoff/{token}/` before any task exists.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct UploadLocalHandoffSnapshotRequest {
+    pub files: Vec<SnapshotUploadFileInfo>,
+}
+
+/// Describes a single file the client wants to upload as part of a handoff snapshot.
+/// Wire-compatible with the server's `SnapshotUploadFileInfo` schema (also used by the
+/// existing harness-side `/harness-support/upload-snapshot` endpoint).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SnapshotUploadFileInfo {
+    pub filename: String,
+    pub mime_type: String,
+}
+
+/// Response body for `POST /agent/handoff/upload-snapshot`. The `uploads` array is aligned
+/// by index with the request `files` array; the client matches each `UploadTarget` back
+/// to the requested filename by index.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct UploadLocalHandoffSnapshotResponse {
+    pub initial_snapshot_token: InitialSnapshotToken,
+    pub expires_at: String,
+    pub uploads: Vec<UploadTarget>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -831,6 +881,13 @@ pub trait AIClient: 'static + Send + Sync {
         request: SpawnAgentRequest,
     ) -> anyhow::Result<SpawnAgentResponse, anyhow::Error>;
 
+    /// Allocate an initial snapshot token and presigned upload URLs for staging local-to-cloud
+    /// handoff snapshot files before the corresponding cloud task exists.
+    async fn upload_local_handoff_snapshot(
+        &self,
+        request: UploadLocalHandoffSnapshotRequest,
+    ) -> anyhow::Result<UploadLocalHandoffSnapshotResponse, anyhow::Error>;
+
     async fn list_ambient_agent_tasks(
         &self,
         limit: i32,
@@ -1005,6 +1062,73 @@ fn into_file_artifact_record(
         description: artifact.description,
         mime_type: artifact.mime_type,
         size_bytes: artifact.size_bytes,
+    }
+}
+
+impl ServerApi {
+    pub(crate) async fn send_agent_message_for_task(
+        &self,
+        task_id: &AmbientAgentTaskId,
+        request: SendAgentMessageRequest,
+    ) -> anyhow::Result<SendAgentMessageResponse, anyhow::Error> {
+        let response = self
+            .post_public_api_response_for_task(task_id, "agent/messages", &request)
+            .await?;
+        let response = response.json::<SendAgentMessageResponse>().await?;
+        Ok(response)
+    }
+
+    #[cfg_attr(target_family = "wasm", allow(dead_code))]
+    pub(crate) async fn list_agent_messages_for_task(
+        &self,
+        task_id: &AmbientAgentTaskId,
+        run_id: &str,
+        request: ListAgentMessagesRequest,
+    ) -> anyhow::Result<Vec<AgentMessageHeader>, anyhow::Error> {
+        let mut params = vec![format!("limit={}", request.limit)];
+        if request.unread_only {
+            params.push("unread=true".to_string());
+        }
+        if let Some(since) = request.since {
+            params.push(format!("since={}", urlencoding::encode(&since)));
+        }
+
+        let path = format!("agent/messages/{run_id}?{}", params.join("&"));
+        let response = self
+            .get_public_api_response_for_task(task_id, &path)
+            .await?;
+        let response = response.json::<Vec<AgentMessageHeader>>().await?;
+        Ok(response)
+    }
+
+    pub(crate) async fn mark_message_delivered_for_task(
+        &self,
+        task_id: &AmbientAgentTaskId,
+        message_id: &str,
+    ) -> anyhow::Result<(), anyhow::Error> {
+        self.post_public_api_response_for_task(
+            task_id,
+            &format!("agent/messages/{message_id}/delivered"),
+            &(),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub(crate) async fn read_agent_message_for_task(
+        &self,
+        task_id: &AmbientAgentTaskId,
+        message_id: &str,
+    ) -> anyhow::Result<ReadAgentMessageResponse, anyhow::Error> {
+        let response = self
+            .post_public_api_response_for_task(
+                task_id,
+                &format!("agent/messages/{message_id}/read"),
+                &(),
+            )
+            .await?;
+        let response = response.json::<ReadAgentMessageResponse>().await?;
+        Ok(response)
     }
 }
 
@@ -1447,6 +1571,16 @@ impl AIClient for ServerApi {
         request: SpawnAgentRequest,
     ) -> anyhow::Result<SpawnAgentResponse, anyhow::Error> {
         let response: SpawnAgentResponse = self.post_public_api("agent/run", &request).await?;
+        Ok(response)
+    }
+
+    async fn upload_local_handoff_snapshot(
+        &self,
+        request: UploadLocalHandoffSnapshotRequest,
+    ) -> anyhow::Result<UploadLocalHandoffSnapshotResponse, anyhow::Error> {
+        let response: UploadLocalHandoffSnapshotResponse = self
+            .post_public_api("agent/handoff/upload-snapshot", &request)
+            .await?;
         Ok(response)
     }
 
@@ -1926,6 +2060,7 @@ impl AIClient for ServerApi {
         struct UpdateBody {
             sequence: i64,
         }
+
         self.patch_public_api_unit(
             &format!("agent/runs/{run_id}/event-sequence"),
             &UpdateBody { sequence },
