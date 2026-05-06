@@ -15,11 +15,14 @@ The Warp client normally communicates with Warp's cloud backend for AI features 
 ## Quick Start
 
 ```bash
-# Build and run with the local shim server (default port 8080)
-cargo run --features with_local_server
+cargo run --release -p warp_shim_server --bin warp-shim-server -- \
+  --port 4444 --upstream-url http://your-vllm-server:8000/v1 \
+  --model auto=your/Model 
 
-# Use a custom port
-SERVER_ROOT_URL=http://localhost:8082 WS_SERVER_URL=ws://localhost:8082/graphql/v2 cargo run --features with_local_server
+WARP_SERVER_ROOT_URL=http://127.0.0.1:4444 \
+WARP_WS_SERVER_URL=ws://127.0.0.1:4444/graphql/v2 \
+WARP_API_KEY=local-shim \
+cargo run --release -p warp --bin warp-oss
 ```
 
 Set your OpenAI-compatible endpoint and API key via environment variables or the shim's configuration.
