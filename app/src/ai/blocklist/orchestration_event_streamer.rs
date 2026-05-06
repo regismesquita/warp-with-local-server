@@ -367,7 +367,8 @@ impl OrchestrationEventStreamer {
             | BlocklistAIHistoryEvent::SplitConversation { .. }
             | BlocklistAIHistoryEvent::UpdatedConversationArtifacts { .. }
             | BlocklistAIHistoryEvent::ConversationOwnershipTransferred { .. }
-            | BlocklistAIHistoryEvent::NewConversationRequestComplete { .. } => {}
+            | BlocklistAIHistoryEvent::NewConversationRequestComplete { .. }
+            | BlocklistAIHistoryEvent::OrchestrationConfigUpdated { .. } => {}
         }
     }
 

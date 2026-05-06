@@ -251,7 +251,6 @@ use crate::env_vars::{
 };
 use crate::pane_group::focus_state::PaneFocusHandle;
 use crate::persistence::{self, FinishedCommandMetadata};
-use crate::safe_warn;
 use crate::server::cloud_objects::update_manager::UpdateManager;
 use crate::server::ids::{ObjectUid, SyncId};
 use crate::server::telemetry::SharingDialogSource;
@@ -341,6 +340,7 @@ use crate::workspaces::{user_workspaces::UserWorkspaces, workspace::CustomerType
 use crate::AIRequestUsageModel;
 use crate::ActiveSession as WindowActiveSession;
 use crate::{report_if_error, AIAgentActionResultType};
+use crate::{safe_error, safe_warn};
 
 use async_channel::{Receiver, Sender};
 use chrono::{DateTime, Local, NaiveDateTime};
@@ -2917,6 +2917,17 @@ impl TerminalView {
             .is_some_and(|index| index > 0)
     }
 
+    /// True when this pane's cloud agent is in any pre-first-exchange phase.
+    /// Thin wrapper over the free function that threads `self`'s handles.
+    fn is_cloud_agent_pre_first_exchange(&self, app: &AppContext) -> bool {
+        is_cloud_agent_pre_first_exchange(
+            self.ambient_agent_view_model.as_ref(),
+            &self.agent_view_controller,
+            &self.model,
+            app,
+        )
+    }
+
     pub fn create_sync_event_based_on_terminal_state(&self, app_ctx: &AppContext) -> SyncEvent {
         if !matches!(
             self.model.lock().terminal_input_state(),
@@ -3162,12 +3173,16 @@ impl TerminalView {
                     original_exchange_count,
                     final_exchange_count,
                     was_ambient_agent,
+                    is_exit_before_new_entrance,
                     ..
                 } => {
                     // Prompt suggestions should not follow the user back to terminal view.
                     me.clear_prompt_suggestions(ctx);
                     // For ambient agent sessions, pop the pane stack to return to the parent terminal.
-                    if *was_ambient_agent {
+                    // Skip the pop when this exit is immediately followed by re-entering agent view
+                    // for a different conversation (e.g. a restored conversation taking over the
+                    // pane).
+                    if *was_ambient_agent && !*is_exit_before_new_entrance {
                         if let Some(pane_stack) =
                             me.pane_stack.as_ref().and_then(|h| h.upgrade(ctx))
                         {
@@ -3244,8 +3259,20 @@ impl TerminalView {
                     let was_new = *original_exchange_count == 0;
                     let was_modified = *final_exchange_count != *original_exchange_count;
 
-                    // Delete the conversation if it's unmodified, new, and has no init steps
-                    if !was_modified && was_new && !has_init_steps {
+                    // Child agents in an orchestration tree are part of the
+                    // orchestrator's pill bar and should remain visible even
+                    // when they're empty (e.g. failed-to-start, or just
+                    // haven't received their first event yet). The auto-
+                    // remove below is meant to prune accidentally-opened
+                    // empty *root* conversations, not children of an
+                    // orchestrator.
+                    let is_child_agent = BlocklistAIHistoryModel::as_ref(ctx)
+                        .conversation(conversation_id)
+                        .is_some_and(|c| c.is_child_agent_conversation());
+
+                    // Delete the conversation if it's unmodified, new, has no init steps,
+                    // and isn't a child agent in an orchestration tree.
+                    if !was_modified && was_new && !has_init_steps && !is_child_agent {
                         conversation_utils::remove_conversation(
                             *conversation_id,
                             me.view_id,
@@ -5256,6 +5283,17 @@ impl TerminalView {
                         .set_is_executing_oz_environment_startup_commands(false);
                 }
 
+                // For an oz local-to-cloud handoff, the first `AppendedExchange` is the
+                // analogue of `HarnessCommandStarted` for non-oz harnesses: the moment we
+                // tear down the queued-prompt block in favor of the live agent UI.
+                if self
+                    .ambient_agent_view_model
+                    .as_ref()
+                    .is_some_and(|model| model.as_ref(ctx).is_local_to_cloud_handoff())
+                {
+                    self.remove_pending_user_query_block(ctx);
+                }
+
                 let should_add_ai_block = history_model
                     .as_ref(ctx)
                     .conversation(conversation_id)
@@ -5306,6 +5344,7 @@ impl TerminalView {
                         &self.cli_subagent_controller,
                         &self.model_events_handle,
                         self.agent_view_controller.clone(),
+                        self.ambient_agent_view_model.clone(),
                         self.view_handle.clone(),
                         self.view_id,
                         ctx,
@@ -5628,7 +5667,8 @@ impl TerminalView {
             | BlocklistAIHistoryEvent::UpdatedConversationArtifacts { .. }
             | BlocklistAIHistoryEvent::DeletedConversation { .. }
             | BlocklistAIHistoryEvent::ConversationServerTokenAssigned { .. }
-            | BlocklistAIHistoryEvent::NewConversationRequestComplete { .. } => {}
+            | BlocklistAIHistoryEvent::NewConversationRequestComplete { .. }
+            | BlocklistAIHistoryEvent::OrchestrationConfigUpdated { .. } => {}
         }
         ctx.notify();
     }
@@ -6418,7 +6458,7 @@ impl TerminalView {
                     .conversation_id_for_action(action_id, ctx.view_id())
                     .and_then(|id| history_model.conversation(&id))
                 else {
-                    safe_warn!(
+                    safe_error!(
                         safe: ("No conversation ID found for command with ID: {:?}", action_id),
                         full: (
                             "No conversation ID found for requested command: ID: {:?}, command: \
@@ -7082,11 +7122,7 @@ impl TerminalView {
         // agent exchange arrives, we hide the interactive input view. A non-interactive footer is
         // rendered instead (see `TerminalView::render`).
         if !FeatureFlag::CloudModeSetupV2.is_enabled()
-            && is_cloud_agent_pre_first_exchange(
-                self.ambient_agent_view_model.as_ref(),
-                &self.agent_view_controller,
-                app,
-            )
+            && self.is_cloud_agent_pre_first_exchange(app)
         {
             return false;
         }
@@ -8205,7 +8241,24 @@ impl TerminalView {
 
             ctx.notify();
 
-            send_telemetry_from_ctx!(TelemetryEvent::SSHControlMasterError, ctx);
+            let has_remote_server = active_session_id.is_some_and(|session_id| {
+                self.sessions
+                    .as_ref(ctx)
+                    .get(session_id)
+                    .is_some_and(|session| {
+                        matches!(
+                            session.session_type(),
+                            SessionType::WarpifiedRemote {
+                                host_id: Some(_),
+                                ..
+                            }
+                        )
+                    })
+            });
+            send_telemetry_from_ctx!(
+                TelemetryEvent::SSHControlMasterError { has_remote_server },
+                ctx
+            );
         }
     }
 
@@ -21392,6 +21445,7 @@ impl TerminalView {
                 &self.cli_subagent_controller,
                 &self.model_events_handle,
                 self.agent_view_controller.clone(),
+                self.ambient_agent_view_model.clone(),
                 self.view_handle.clone(),
                 ctx.view_id(),
                 ctx,
@@ -23416,7 +23470,12 @@ impl TerminalView {
         // Save a backup of the conversation before truncating, so users can restore it later.
         BlocklistAIHistoryModel::handle(ctx).update(ctx, |history_model, ctx| {
             if let Some(conversation) = history_model.conversation(&conversation_id).cloned() {
-                if let Err(e) = history_model.fork_conversation(&conversation, PRE_REWIND_PREFIX, ctx) {
+                if let Err(e) = history_model.fork_conversation(
+                    &conversation,
+                    PRE_REWIND_PREFIX,
+                    false, /* preserve_task_ids */
+                    ctx,
+                ) {
                     log::warn!("Failed to save pre-rewind backup of conversation {conversation_id}: {e}");
                 }
             } else {
@@ -26071,13 +26130,7 @@ impl View for TerminalView {
 
                     if self.is_input_box_visible(&model, app) {
                         column.add_child(self.render_input());
-                    } else if !model.is_read_only()
-                        && is_cloud_agent_pre_first_exchange(
-                            self.ambient_agent_view_model.as_ref(),
-                            &self.agent_view_controller,
-                            app,
-                        )
-                    {
+                    } else if !model.is_read_only() && self.is_cloud_agent_pre_first_exchange(app) {
                         column.add_child(ambient_agent::render_loading_footer(appearance));
                     } else if self.show_remote_server_loading_footer(&model, app) {
                         column.add_child(

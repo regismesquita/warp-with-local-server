@@ -1602,7 +1602,7 @@ fn launch_remote_child(
         parent_run_id: Some(parent_run_id),
         runtime_skills,
         referenced_attachments: vec![],
-        fork_from_conversation_id: None,
+        conversation_id: None,
         initial_snapshot_token: None,
     };
 
@@ -1768,6 +1768,7 @@ fn handle_ai_history_event(
         | BlocklistAIHistoryEvent::UpdatedConversationArtifacts { .. }
         | BlocklistAIHistoryEvent::ConversationServerTokenAssigned { .. }
         | BlocklistAIHistoryEvent::ConversationOwnershipTransferred { .. }
-        | BlocklistAIHistoryEvent::NewConversationRequestComplete { .. } => (),
+        | BlocklistAIHistoryEvent::NewConversationRequestComplete { .. }
+        | BlocklistAIHistoryEvent::OrchestrationConfigUpdated { .. } => (),
     }
 }

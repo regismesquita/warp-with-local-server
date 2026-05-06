@@ -736,7 +736,19 @@ impl BlocklistAIController {
         };
         inputs.push(ai_input);
 
-        if let Err(e) = self.send_request_input(
+        // Piggyback any pending orchestration config update for this conversation.
+        let taken_dirty_event = AIDocumentModel::handle(ctx).update(ctx, |model, _| {
+            model.take_dirty_orchestration_event(&conversation_id)
+        });
+        if let Some(ref dirty_event) = taken_dirty_event {
+            inputs.push(AIAgentInput::OrchestrationConfigUpdate {
+                plan_id: dirty_event.plan_id.clone(),
+                config: dirty_event.config.clone(),
+                status: dirty_event.status,
+            });
+        }
+
+        let send_result = self.send_request_input(
             RequestInput::for_task(
                 inputs,
                 task_id,
@@ -755,8 +767,17 @@ impl BlocklistAIController {
             /*can_attempt_resume_on_error*/ true,
             is_queued_prompt,
             ctx,
-        ) {
+        );
+
+        // If the request failed, re-insert the dirty event so it isn't
+        // silently lost.
+        if let Err(e) = &send_result {
             log::error!("Failed to send agent request: {e:?}");
+            if let Some(dirty_event) = taken_dirty_event {
+                AIDocumentModel::handle(ctx).update(ctx, |model, _| {
+                    model.set_dirty_orchestration_event(conversation_id, dirty_event);
+                });
+            }
         }
     }
 
@@ -1401,7 +1422,7 @@ impl BlocklistAIController {
         }
 
         BlocklistAIHistoryModel::handle(ctx).update(ctx, |history, ctx| {
-            history.set_active_conversation_id(conversation_id, self.terminal_view_id, ctx);
+            history.mark_active_conversation_id(conversation_id, self.terminal_view_id, ctx);
         });
 
         if !FeatureFlag::AgentView.is_enabled() && trigger == FollowUpTrigger::Auto {
@@ -2311,8 +2332,8 @@ impl BlocklistAIController {
             stream_id: response_stream_id.clone(),
         });
         if !is_passive_request {
-            BlocklistAIHistoryModel::handle(ctx).update(ctx, |history_model, ctx| {
-                history_model.set_active_conversation_id(
+            history_model.update(ctx, |history_model, ctx| {
+                history_model.mark_active_conversation_id(
                     conversation_data.id,
                     self.terminal_view_id,
                     ctx,
