@@ -271,6 +271,7 @@ fn user_input_to_message(
             })
         }
         api::request::input::user_inputs::user_input::Input::PassiveSuggestionResult(_)
+        | api::request::input::user_inputs::user_input::Input::OrchestrationConfigUpdate(_)
         | api::request::input::user_inputs::user_input::Input::ToolCallResult(_) => None,
     }
 }
