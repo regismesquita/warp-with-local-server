@@ -160,6 +160,36 @@ fn read_files_adapter_roundtrips_representative_payload() {
 }
 
 #[test]
+fn read_files_tolerates_incomplete_line_ranges_from_model() {
+    let registry = registry_for_tools(&[api::ToolType::ReadFiles]);
+    let converted = convert(
+        &registry,
+        "read_files",
+        json!({
+            "files": [{
+                "name": "src/main.rs",
+                "line_ranges": [
+                    { "end": 3 },
+                    { "start": 8 },
+                    {}
+                ]
+            }]
+        }),
+    );
+
+    let Some(api::message::tool_call::Tool::ReadFiles(call)) = converted.tool_call.tool else {
+        panic!("expected ReadFiles tool call");
+    };
+    assert_eq!(
+        call.files[0].line_ranges,
+        vec![
+            api::FileContentLineRange { start: 1, end: 3 },
+            api::FileContentLineRange { start: 8, end: 8 },
+        ]
+    );
+}
+
+#[test]
 fn apply_file_diffs_adapter_roundtrips_representative_payload() {
     let registry = registry_for_tools(&[api::ToolType::ApplyFileDiffs]);
     let converted = convert(

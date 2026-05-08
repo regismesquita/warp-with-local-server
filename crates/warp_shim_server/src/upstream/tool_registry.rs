@@ -599,6 +599,7 @@ fn read_files_from_args(args: &Value) -> Result<api::message::tool_call::Tool> {
                 .into_iter()
                 .flatten()
                 .map(line_range_from_value)
+                .filter_map(Result::transpose)
                 .collect::<Result<Vec<_>>>()?;
             Ok(api::message::tool_call::read_files::File { name, line_ranges })
         })
@@ -736,14 +737,18 @@ fn v4a_update_from_value(
     })
 }
 
-fn line_range_from_value(value: &Value) -> Result<api::FileContentLineRange> {
-    let start = required_positive_u32(value, "start")?;
-    let end = required_positive_u32(value, "end")?;
+fn line_range_from_value(value: &Value) -> Result<Option<api::FileContentLineRange>> {
+    let start = optional_positive_u32(value, "start")?;
+    let end = optional_positive_u32(value, "end")?;
+    let Some(start) = start.or_else(|| end.map(|_| 1)) else {
+        return Ok(None);
+    };
+    let end = end.unwrap_or(start);
     if end < start {
         bail!("`end` must be greater than or equal to `start`");
     }
 
-    Ok(api::FileContentLineRange { start, end })
+    Ok(Some(api::FileContentLineRange { start, end }))
 }
 
 fn result_to_openai_content(result: &api::request::input::ToolCallResult) -> String {
@@ -1047,26 +1052,16 @@ fn optional_string(value: &Value, key: &str) -> Option<String> {
     })
 }
 
-fn required_i64(value: &Value, key: &str) -> Result<i64> {
-    optional_i64(value, key).ok_or_else(|| anyhow!("missing required integer `{key}`"))
-}
-
-fn optional_i64(value: &Value, key: &str) -> Option<i64> {
-    value.get(key).and_then(|value| match value {
-        Value::Number(value) => value
-            .as_i64()
-            .or_else(|| value.as_u64().and_then(|value| i64::try_from(value).ok())),
-        Value::String(value) => value.parse::<i64>().ok(),
-        _ => None,
-    })
-}
-
-fn required_positive_u32(value: &Value, key: &str) -> Result<u32> {
-    let raw = required_i64(value, key)?;
+fn optional_positive_u32(value: &Value, key: &str) -> Result<Option<u32>> {
+    let Some(raw) = optional_i64_checked(value, key)? else {
+        return Ok(None);
+    };
     if raw < 1 {
         bail!("`{key}` must be greater than or equal to 1");
     }
-    u32::try_from(raw).map_err(|_| anyhow!("`{key}` must be less than or equal to u32::MAX"))
+    Ok(Some(u32::try_from(raw).map_err(|_| {
+        anyhow!("`{key}` must be less than or equal to u32::MAX")
+    })?))
 }
 
 fn optional_non_negative_i32(value: &Value, key: &str) -> Result<Option<i32>> {
@@ -1086,6 +1081,7 @@ fn optional_i64_checked(value: &Value, key: &str) -> Result<Option<i64>> {
         return Ok(None);
     };
     match value {
+        Value::Null => Ok(None),
         Value::Number(number) => {
             if let Some(value) = number.as_i64() {
                 Ok(Some(value))
