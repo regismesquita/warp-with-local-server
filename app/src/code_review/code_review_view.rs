@@ -183,6 +183,8 @@ use super::{
     git_dialog::{GitDialog, GitDialogEvent, GitDialogKind},
     GlobalCodeReviewEvent, GlobalCodeReviewModel,
 };
+#[cfg(not(target_family = "wasm"))]
+use crate::code::buffer_location::FileLocation;
 use crate::code::ShowCommentEditorProvider;
 #[cfg(not(target_family = "wasm"))]
 use crate::code::ShowFindReferencesCard;
@@ -200,6 +202,7 @@ use warp_util::{
     content_version::ContentVersion,
     file::{FileLoadError, FileSaveError},
     path::LineAndColumnArg,
+    standardized_path::StandardizedPath,
 };
 
 pub struct CodeReviewHeaderFields {
@@ -764,6 +767,13 @@ impl CodeReviewView {
     /// Unsubscribes from the diff state model.
     pub fn on_close(&mut self, ctx: &mut ViewContext<Self>) {
         self.is_open = false;
+
+        if self
+            .find_model
+            .read(ctx, |model, _| model.is_find_bar_open())
+        {
+            self.close_find_bar(ctx);
+        }
 
         ctx.unsubscribe_to_model(&self.diff_state_model);
 
@@ -2277,8 +2287,14 @@ impl CodeReviewView {
     }
 
     fn close_find_bar(&mut self, ctx: &mut ViewContext<Self>) {
-        self.find_model.update(ctx, |model, _| {
+        self.find_bar.update(ctx, |find_bar, ctx| {
+            find_bar.set_query_text("", ctx);
+        });
+
+        let editor_handles = self.editor_handles().collect::<Vec<_>>();
+        self.find_model.update(ctx, |model, model_ctx| {
             model.set_is_find_bar_open(false);
+            model.update_query(None, editor_handles.into_iter(), model_ctx);
             model.clear_results();
         });
 
@@ -2927,7 +2943,7 @@ impl CodeReviewView {
 
             let local_code_view = ctx.add_typed_action_view(|ctx| {
                 let editor = LocalCodeEditorView::new_with_global_buffer(
-                    &full_file_path,
+                    FileLocation::Local(full_file_path.clone()),
                     |buffer_state, ctx| {
                         ctx.add_typed_action_view(|ctx| {
                             let mut editor_view = CodeEditorView::new(
@@ -5558,7 +5574,10 @@ impl CodeReviewView {
                 .unwrap_or(GitFileStatus::Modified),
             _ => GitFileStatus::Modified,
         };
-        FileStatusInfo { path, status }
+        FileStatusInfo {
+            path: StandardizedPath::from_local_absolute_unchecked(&path),
+            status,
+        }
     }
 
     fn discard_file(&mut self, path: &Path, should_stash: bool, ctx: &mut ViewContext<Self>) {
