@@ -14924,7 +14924,7 @@ dependencies = [
  "prost-types",
  "reqwest",
  "reqwest-eventsource",
- "rustls 0.23.39",
+ "rustls",
  "serde",
  "serde_json",
  "tokio",

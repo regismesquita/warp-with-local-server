@@ -127,7 +127,8 @@ fn system_query_to_text(system_query: &api::message::SystemQuery) -> Option<&str
         api::message::system_query::Type::ResumeConversation(_) => {
             Some("Continue the conversation.")
         }
-        api::message::system_query::Type::GeneratePassiveSuggestions(_) => None,
+        api::message::system_query::Type::GeneratePassiveSuggestions(_)
+        | api::message::system_query::Type::HandoffRehydration(_) => None,
     }
 }
 
